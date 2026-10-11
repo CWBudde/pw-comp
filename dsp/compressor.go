@@ -45,13 +45,10 @@ type SoftKneeCompressor struct {
 	releaseFactor float64   // Release coefficient
 
 	// Cached calculations
-	threshold      float64 // Linear threshold
-	thresholdRecip float64 // 1 / threshold
-	kneeFactor     float64 // Knee factor in log2² space: (2*log2(10)/20 * kneeDB)²
-	makeupGainLin  float64 // Linear makeup gain
-	slopeRecip     float64 // 1 / ratio - 1 (for gain calculation)
-	sampleRate     float64 // Current sample rate
-	channels       int     // Number of audio channels
+	kneeFactor    float64 // Knee factor in log2² space: (2*log2(10)/20 * kneeDB)²
+	makeupGainLin float64 // Linear makeup gain
+	sampleRate    float64 // Current sample rate
+	channels      int     // Number of audio channels
 
 	// Metering (Atomic bits of float64 for lock-free UI reading)
 	inputPeakL      uint64
@@ -357,16 +354,11 @@ func (c *SoftKneeCompressor) updateTimeConstants() {
 
 // updateParameters recalculates all internal cached values (internal, assumes lock held).
 func (c *SoftKneeCompressor) updateParameters() {
-	c.threshold = DBToLinear(c.thresholdDB)
-	c.thresholdRecip = 1.0 / c.threshold
-
 	// Calculate kneeFactor = (2 * log2(10)/20 * kneeDB)²
 	// This matches the Pascal implementation: Sqr(2 * CdBtoAmpExpGain32 * FKnee_dB)
 	// Working in log2 space, not dB space
 	kneeLog2 := 2.0 * log2Of10Div20 * c.kneeDB
 	c.kneeFactor = kneeLog2 * kneeLog2
-
-	c.slopeRecip = 1.0/c.ratio - 1.0 // Kept for future use or debugging
 
 	if c.autoMakeup {
 		gainReductionDB := c.thresholdDB * (1.0 - 1.0/c.ratio)

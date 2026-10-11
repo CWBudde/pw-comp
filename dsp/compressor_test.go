@@ -130,8 +130,8 @@ func TestThresholdConversion(t *testing.T) {
 	comp.SetThreshold(-20.0)
 
 	expected := math.Pow(10.0, -20.0/20.0)
-	if math.Abs(comp.threshold-expected) > 1e-9 {
-		t.Errorf("Threshold conversion: expected %f, got %f", expected, comp.threshold)
+	if got := DBToLinear(comp.GetThreshold()); math.Abs(got-expected) > 1e-9 {
+		t.Errorf("Threshold conversion: expected %f, got %f", expected, got)
 	}
 }
 
@@ -183,7 +183,7 @@ func TestKneeBoundaries(t *testing.T) {
 
 	// kneeFactor should equal (2 * log2(10)/20 * kneeDB)²
 	// This matches the Pascal implementation: Sqr(2 * CdBtoAmpExpGain32 * FKnee_dB)
-	kneeLog2 := 2.0 * 0.166096404744 * 6.0
+	kneeLog2 := 2.0 * log2Of10Div20 * 6.0
 	expectedKneeFactor := kneeLog2 * kneeLog2
 
 	if math.Abs(comp.kneeFactor-expectedKneeFactor) > 1e-9 {
