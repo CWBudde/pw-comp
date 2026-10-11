@@ -179,16 +179,17 @@ func TestIntegration_CompressionRatio_Verification(t *testing.T) {
 	outputRMS := CalculateRMS(buffer)
 	outputDBFS := LinearToDBFS(outputRMS)
 
-	// With 4:1 ratio, 12 dB excess becomes 3 dB excess
-	// Expected output: -20 + 3 = -17 dBFS
-	// Due to soft knee (even at 0 width), attack/release envelopes, and RMS vs peak measurements,
-	// allow larger tolerance
-	expectedDBFS := -17.0
-	toleranceDB := 3.0 // dB
+	// With a hard knee and 4:1 ratio, 12 dB excess becomes 3 dB excess,
+	// so the output peak is -20 + 3 = -17 dBFS. The detector follows the peak,
+	// but we measure RMS: a sine's RMS sits 20*log10(sqrt(2)) ≈ 3.01 dB below its peak.
+	// The remaining tolerance covers the envelope ripple and the fast log2/pow2 approximations.
+	expectedDBFS := -17.0 - 20.0*math.Log10(math.Sqrt2)
+	toleranceDB := 1.0
 
-	if math.Abs(outputDBFS-expectedDBFS) > toleranceDB {
+	actualDiff := math.Abs(outputDBFS - expectedDBFS)
+	if actualDiff > toleranceDB {
 		t.Errorf("Compression ratio verification failed: expected ~%.1f dBFS, got %.1f dBFS (diff %.2f dB)",
-			expectedDBFS, outputDBFS, math.Abs(outputDBFS-expectedDBFS))
+			expectedDBFS, outputDBFS, actualDiff)
 	}
 }
 
@@ -363,12 +364,14 @@ func TestIntegration_AttackResponse(t *testing.T) {
 	compressor.SetAttack(attackTimeMS)
 	compressor.SetRelease(200.0) // Slow release
 
-	// Generate step signal: silence then loud
+	// Generate step signal: silence then loud. The loud part must be long
+	// enough for the 20 ms attack envelope to cross the threshold.
 	stepPosition := testBufferMedium / 2
+	stepLength := testBufferLarge * 4
 	amplitude := DBFSToLinear(-5.0) // Well above threshold
 
-	left := GenerateStep(amplitude, stepPosition, testBufferMedium)
-	right := GenerateStep(amplitude, stepPosition, testBufferMedium)
+	left := GenerateStep(amplitude, stepPosition, stepLength)
+	right := GenerateStep(amplitude, stepPosition, stepLength)
 	buffer := InterleaveChannels(left, right)
 
 	// Process
@@ -383,12 +386,22 @@ func TestIntegration_AttackResponse(t *testing.T) {
 		t.Errorf("Pre-step region should be silent: RMS %.6f", preStepRMS)
 	}
 
-	// After step, should show attack envelope (gradually increasing compression)
-	// Not testing exact timing here, just that compression engages
+	// After the step, compression must engage and reduce the output below the input
 	postStepRMS := CalculateRMS(leftOut[stepPosition:])
 	if postStepRMS >= amplitude {
-		t.Errorf("Attack response not detected: output RMS %.6f should be < input %.6f",
+		t.Errorf("Attack response not detected: output RMS %.6f should be < input amplitude %.6f",
 			postStepRMS, amplitude)
+	}
+
+	// The attack envelope increases compression over time, so the end of the
+	// step is attenuated more than its start
+	quarter := (stepLength - stepPosition) / 4
+	earlyRMS := CalculateRMS(leftOut[stepPosition : stepPosition+quarter])
+	lateRMS := CalculateRMS(leftOut[stepLength-quarter:])
+
+	if lateRMS >= earlyRMS {
+		t.Errorf("Attack envelope not progressing: late RMS %.6f should be < early RMS %.6f",
+			lateRMS, earlyRMS)
 	}
 }
 
@@ -396,35 +409,41 @@ func TestIntegration_AttackResponse(t *testing.T) {
 func TestIntegration_ContinuousProcessing_StateCarryover(t *testing.T) {
 	setupTestCompressor()
 
-	// Generate continuous loud signal split across buffers
+	// Generate continuous loud signal
 	amplitude := DBFSToLinear(-10.0)
-
-	buffer1 := GenerateInterleavedStereoSine(SineWaveConfig{
+	signal := GenerateInterleavedStereoSine(SineWaveConfig{
 		Frequency:  testFreq1kHz,
 		Amplitude:  amplitude,
 		SampleRate: testSampleRate,
-	}, testBufferMedium, 0.0)
+	}, 2*testBufferMedium, 0.0)
 
-	buffer2 := GenerateInterleavedStereoSine(SineWaveConfig{
-		Frequency:  testFreq1kHz,
-		Amplitude:  amplitude,
-		SampleRate: testSampleRate,
-		Phase:      2.0 * math.Pi * testFreq1kHz * float64(testBufferMedium) / testSampleRate,
-	}, testBufferMedium, 0.0)
+	// Reference: process the whole signal as one buffer
+	contiguous := append([]float32(nil), signal...)
+	processAudioBuffer(contiguous)
 
-	// Process first buffer
-	processAudioBuffer(buffer1)
-	rms1 := CalculateRMS(buffer1)
+	// Process the same signal split into two consecutive buffers with a fresh compressor
+	setupTestCompressor()
 
-	// Process second buffer
-	processAudioBuffer(buffer2)
-	rms2 := CalculateRMS(buffer2)
+	split := append([]float32(nil), signal...)
+	half := len(split) / 2
+	processAudioBuffer(split[:half])
+	processAudioBuffer(split[half:])
 
-	// Second buffer should have similar or more compression (state carries over)
-	// RMS should be relatively stable
-	if math.Abs(float64(rms1-rms2))/float64(rms1) > 0.3 {
-		t.Errorf("State carryover issue: buffer1 RMS %.6f, buffer2 RMS %.6f (%.1f%% difference)",
-			rms1, rms2, 100.0*math.Abs(float64(rms1-rms2))/float64(rms1))
+	// Envelope state carries over between buffers, so splitting must not change the output
+	for i := range contiguous {
+		if split[i] != contiguous[i] {
+			t.Fatalf("State carryover issue: sample %d differs (split %.6f, contiguous %.6f)",
+				i, split[i], contiguous[i])
+		}
+	}
+
+	// The second buffer starts with the envelope already raised, so it is compressed more
+	rms1 := CalculateRMS(split[:half])
+	rms2 := CalculateRMS(split[half:])
+
+	if rms2 >= rms1 {
+		t.Errorf("Compression did not build up across buffers: buffer1 RMS %.6f, buffer2 RMS %.6f",
+			rms1, rms2)
 	}
 }
 
