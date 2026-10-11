@@ -47,18 +47,6 @@ func LinearToDBSafe(linear float64) float64 {
 	return LinearToDB(linear)
 }
 
-// FastPow2 computes 2^x efficiently for small integer exponents.
-// For non-integer values, falls back to math.Pow.
-func FastPow2(x float64) float64 {
-	// For integer exponents, use bit shifting (extremely fast)
-	if x == float64(int(x)) && x >= 0 && x < 64 {
-		return float64(uint64(1) << uint(x))
-	}
-
-	// Otherwise use standard power function
-	return math.Pow(2.0, x)
-}
-
 // FastPow computes base^exponent using FastLog2 for improved performance.
 // This is faster than math.Pow for general cases.
 // Formula: base^exp = 2^(exp * log2(base)).

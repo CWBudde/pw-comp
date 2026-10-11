@@ -42,6 +42,12 @@ func FastLog2(x float64) float64 {
 	return float64(exp-1) + logMantissa
 }
 
+// Exponent range of float64: 2^1024 overflows to +Inf, 2^-1075 underflows to 0.
+const (
+	fastPower2MaxExp = 1024
+	fastPower2MinExp = -1075
+)
+
 // Polynomial coefficients for 2^x approximation (3rd order minimum error).
 // These coefficients provide a fast power-of-2 approximation for the fractional part.
 //
@@ -57,23 +63,35 @@ var cp2MinError3 = []float64{
 //
 // The approximation works by:
 // 1. Splitting x into integer and fractional parts
-// 2. Computing 2^intPart using efficient bit shifting (math.Ldexp)
-// 3. Approximating 2^fracPart using a polynomial
-// 4. Combining: 2^x = 2^intPart * 2^fracPart.
+// 2. Approximating 2^fracPart using a polynomial
+// 3. Scaling by 2^intPart through the exponent bits (math.Ldexp): 2^x = 2^fracPart * 2^intPart.
+//
+// Inputs above the float64 exponent range return +Inf and inputs below it return 0,
+// matching math.Pow(2, x). NaN is propagated. The compressor only calls it with
+// gain values in log2 space (x <= 0), far inside the valid range.
 func FastPower2(x float64) float64 {
+	// Guard the float64 exponent range before converting to int, which is
+	// implementation-defined for out-of-range values
+	switch {
+	case math.IsNaN(x):
+		return x
+	case x >= fastPower2MaxExp:
+		return math.Inf(1)
+	case x <= fastPower2MinExp:
+		return 0
+	}
+
 	// Split into integer and fractional parts
 	intPart := int(math.Round(x))
 	fracPart := x - float64(intPart)
-
-	// Use bit shifting for integer part (very fast)
-	intResult := math.Ldexp(1.0, intPart) // Efficient 2^intPart
 
 	// Evaluate polynomial for fractional part using Horner's method
 	// poly(f) = 1 + f * (c0 + f * (c1 + f * c2))
 	polyResult := 1.0 + fracPart*(cp2MinError3[0]+
 		fracPart*(cp2MinError3[1]+fracPart*cp2MinError3[2]))
 
-	return intResult * polyResult
+	// Scale by 2^intPart via the exponent bits (very fast)
+	return math.Ldexp(polyResult, intPart)
 }
 
 // FastSqrt computes sqrt(x) using Babylonian/Newton-Raphson method.
@@ -83,6 +101,11 @@ func FastPower2(x float64) float64 {
 // 1. Using bit manipulation to get an initial guess
 // 2. Performing two Newton-Raphson iterations for refinement
 // Formula: x_new = 0.5 * (x_old + value/x_old).
+//
+// FastSqrt returns 0 for x <= 0. This is exact for x == 0 and intentionally
+// clamps negative inputs (which can only arise from rounding in callers such as
+// the compressor's knee term) instead of returning NaN, so a gain calculation
+// never propagates NaN into the audio path.
 func FastSqrt(x float64) float64 {
 	if x <= 0 {
 		return 0
