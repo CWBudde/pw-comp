@@ -8,7 +8,7 @@ import (
 
 const (
 	// log2Of10Div20 is the conversion factor for dB to log2: log2(10) / 20
-	// Used for converting decibel values to log2 domain for fast approximation
+	// Used for converting decibel values to log2 domain for fast approximation.
 	log2Of10Div20 = 0.166096404744
 )
 

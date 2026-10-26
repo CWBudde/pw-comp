@@ -78,3 +78,12 @@ enable = ['gci', 'gofumpt', 'goimports']
 
 [formatters.exclusions]
 generated = 'lax'
+
+[formatters.settings.gci]
+sections = ['standard', 'default', 'localmodule']
+
+[formatters.settings.gofumpt]
+module-path = 'pw-comp'
+
+[formatters.settings.goimports]
+local-prefixes = ['pw-comp']

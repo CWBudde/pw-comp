@@ -37,7 +37,7 @@ includes = ["*.go"]
 
 [formatter.gci]
 command = "gci"
-options = ["-w"]
+options = ["write", "-s", "standard", "-s", "default", "-s", "localmodule"]
 includes = ["*.go"]
 priority = 1 # run after gofumpt
 

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nsf/termbox-go"
+
 	"pw-comp/dsp"
 )
 
